@@ -726,7 +726,8 @@ jobs:
 
           if [ "${{ inputs.enable_susfs }}" == "true" ]; then
             echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
-            retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
+            retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu \
+              || retry_git_clone https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
 
             CONFIG_FILE="config/config"
             if [ -f "$CONFIG_FILE" ]; then
@@ -1436,6 +1437,7 @@ jobs:
             "BakaSU")
               echo "添加 BakaSU..."
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s "$BRANCH"
+              f="KernelSU/kernel/tools/susfs_compat.mk"; [ -f "$f" ] && sed -i "/Please wait susfs update/d" "$f" && echo "ABK: removed BakaSU SUSFS gate" || true
               ;;
           esac
 
