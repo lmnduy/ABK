@@ -731,9 +731,9 @@ jobs:
 
             CONFIG_FILE="config/config"
             if [ -f "$CONFIG_FILE" ]; then
-              CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2)
+              CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
               if [ "$CUSTOM_ENABLED" == "true" ]; then
-                CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2)
+                CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
                 if [ -n "$CUSTOM_COMMIT" ]; then
                   echo "切换 SUSFS 到自定义提交: $CUSTOM_COMMIT"
                   cd susfs4ksu
