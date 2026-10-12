@@ -725,30 +725,37 @@ jobs:
           rm -rf AnyKernel3/.git
 
           if [ "${{ inputs.enable_susfs }}" == "true" ]; then
-            echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
-            retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu \
-              || retry_git_clone https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
-
+            echo "鍏嬮殕 SUSFS (鍒嗘敮: $SUSFS_BRANCH)..."
+            if ! retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu; then
+              echo "::warning::GitLab clone failed; trying GitHub mirror"
+              retry_git_clone https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu || true
+            fi
+            
             CONFIG_FILE="config/config"
+            CUSTOM_COMMIT=""
             if [ -f "$CONFIG_FILE" ]; then
               CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
               if [ "$CUSTOM_ENABLED" == "true" ]; then
                 CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2 | tr -d '[:space:]')
-                if [ -n "$CUSTOM_COMMIT" ]; then
-                  echo "切换 SUSFS 到自定义提交: $CUSTOM_COMMIT"
-                  cd susfs4ksu
-                  # 浅克隆 (--depth 1) 只含分支 HEAD，历史里较旧的固定提交不在其中，
-                  # 直接 checkout 会因 "reference is not a tree" 失败，先补全历史。
-                  git fetch --unshallow origin "$SUSFS_BRANCH" 2>/dev/null \
-                    || git fetch --depth=1000 origin "$SUSFS_BRANCH" 2>/dev/null \
-                    || true
-                  git checkout "$CUSTOM_COMMIT"
-                  cd ..
-                fi
               fi
             fi
-
-            SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
+            
+            if [ -n "$CUSTOM_COMMIT" ]; then
+              echo "鍒囨崲 SUSFS 鍒拌嚜瀹氫箟鎻愪氦: $CUSTOM_COMMIT"
+              if ! ( cd susfs4ksu && git fetch --unshallow origin "$SUSFS_BRANCH" 2>/dev/null; git fetch --depth 1 origin "$CUSTOM_COMMIT" 2>/dev/null; git checkout "$CUSTOM_COMMIT" ); then
+                echo "::warning::git checkout $CUSTOM_COMMIT failed; fetching tarball via GitLab API"
+                rm -rf susfs4ksu && mkdir -p susfs4ksu
+                curl -fsSL --retry 3 "https://gitlab.com/api/v4/projects/simonpunk%2Fsusfs4ksu/repository/archive.tar.gz?sha=$CUSTOM_COMMIT" -o /tmp/susfs_pin.tgz
+                tar xzf /tmp/susfs_pin.tgz -C susfs4ksu --strip-components=1
+              fi
+            elif [ ! -d susfs4ksu ] || [ -z "$(ls -A susfs4ksu 2>/dev/null)" ]; then
+              echo "::warning::susfs unavailable via git; fetching branch tarball via GitLab API"
+              rm -rf susfs4ksu && mkdir -p susfs4ksu
+              curl -fsSL --retry 3 "https://gitlab.com/api/v4/projects/simonpunk%2Fsusfs4ksu/repository/archive.tar.gz?sha=$SUSFS_BRANCH" -o /tmp/susfs_branch.tgz
+              tar xzf /tmp/susfs_branch.tgz -C susfs4ksu --strip-components=1
+            fi
+            
+            SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd' 2>/dev/null || echo "tarball-${CUSTOM_COMMIT}")
             echo "SUSFS_LATEST_COMMIT_DATE=$SUSFS_LATEST_COMMIT_DATE" >> $GITHUB_ENV
             echo "SUSFS 仓库最新提交日期: $SUSFS_LATEST_COMMIT_DATE"
           else
