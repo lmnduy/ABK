@@ -1445,6 +1445,7 @@ jobs:
               echo "添加 BakaSU..."
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s "$BRANCH"
               f="KernelSU/kernel/tools/susfs_compat.mk"; [ -f "$f" ] && sed -i "/Please wait susfs update/d" "$f" && echo "ABK: removed BakaSU SUSFS gate" || true
+              f="KernelSU/kernel/feature/selinux_hide.c"; if [ -f "$f" ] && ! grep -q "struct selinux_state fake_state;" "$f"; then sed -i "/bool ksu_selinux_hide_running __read_mostly = false;/a struct selinux_state fake_state;" "$f"; echo "ABK: defined fake_state in $f"; fi
               ;;
           esac
 
