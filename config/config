@@ -24,7 +24,7 @@ custom=false
 # 用于把 SUSFS 钉回可编译版本，规避其后上游 KernelSU/SUSFS API 漂移导致的补丁 reject。
 gki-android12-5.10=4003ecf2d01c
 gki-android13-5.15=65ea8683c794
-gki-android14-6.1=52eaf3b8fa50
+gki-android14-6.1=24743360ea08d98f6ad72b856851abed8de5854f 
 gki-android15-6.6=a8c720c42ca4
 gki-android16-6.12=72bdce7ce2de
 
