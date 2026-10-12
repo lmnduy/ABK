@@ -16,7 +16,8 @@
 # 2026-09-30: KSU Stable/Dev 已钉到上游最新 commit (见 .github/scripts/resolve-ksu-ref.sh)，
 # SUSFS 需与之同代才能干净应用 10_enable_susfs_for_ksu.patch，故改用各分支最新 SUSFS
 # (custom=false)。下方 6-22 提交保留为可快速回退的 6 月绿色基线：回退时把 custom 改回 true。
-custom=false
+# 2026-10-12: custom=true -> pin SUSFS(android14-6.1)=24743360, pair with BakaSU 2026-10-05 (stable)
+custom=true
 
 # ==================== SUSFS 各分支的 commit hash ====================
 # 仅当 custom=true 时生效
