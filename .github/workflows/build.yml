@@ -1450,6 +1450,7 @@ jobs:
 
       - name: 修复 BakaSU SUSFS 源码兼容
         if: inputs.ksu_variant == 'BakaSU' && inputs.enable_susfs
+        continue-on-error: true
         env:
           BASH_ENV: ${{ inputs.source_mode == 'custom_git' && format('{0}/.github/scripts/custom-source-feature-env.sh', github.workspace) || '' }}
           ABK_FEATURE_ID: susfs
