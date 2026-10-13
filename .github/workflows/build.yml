@@ -1446,6 +1446,7 @@ jobs:
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s "$BRANCH"
               f="KernelSU/kernel/tools/susfs_compat.mk"; [ -f "$f" ] && sed -i "/Please wait susfs update/d" "$f" && echo "ABK: removed BakaSU SUSFS gate" || true
               f="KernelSU/kernel/feature/selinux_hide.c"; if [ -f "$f" ] && ! grep -q "struct selinux_state fake_state;" "$f"; then sed -i "/bool ksu_selinux_hide_running __read_mostly = false;/a struct selinux_state fake_state;" "$f"; echo "ABK: defined fake_state in $f"; fi
+              f="KernelSU/kernel/selinux/rules.c"; if [ -f "$f" ] && ! grep -q "fake_state.initialized" "$f"; then sed -i "/backup sepolicy success!/a extern struct selinux_state fake_state; fake_state.initialized = true; fake_state.policy = backup_sepolicy;" "$f"; echo "ABK: init fake_state in $f"; fi
               ;;
           esac
 
