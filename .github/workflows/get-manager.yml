@@ -73,6 +73,7 @@ jobs:
         with:
           sparse-checkout: |
             .github/scripts
+            app/src/main/assets/susfs
 
       - name: 确定 KernelSU 分支
         if: inputs.kernelsu_variant != 'None'
@@ -266,6 +267,85 @@ jobs:
           fi
           cd ..
           rm -rf susfs-temp "$NAME"
+
+      - name: 让 SUSFS 模块携带 ABI 匹配的 ksu_susfs (per-UID sus_path)
+        id: abi_susfs_bin
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+
+          # 内核打了 per-UID sus_path 补丁后 struct st_susfs_sus_path 多了 int uid -> ABI 变了。
+          # 从 sidex15/susfs4ksu-module 下载的预编译模块自带旧 ABI 的 ksu_susfs，
+          # 这里把它替换成本仓库同版（ABI 匹配）的静态工具，并把模块自带的远程自更新指向同一份。
+          PINNED_BIN_URL="https://raw.githubusercontent.com/lmnduy/ABK/dev/app/src/main/assets/susfs/arm64-v8a/ksu_susfs"
+          SRC_BIN="app/src/main/assets/susfs/arm64-v8a/ksu_susfs"
+
+          MODULE_ZIP=""
+          for candidate in susfs-module/*.zip; do
+            if [ -f "$candidate" ]; then MODULE_ZIP="$candidate"; break; fi
+          done
+          if [ -z "$MODULE_ZIP" ]; then
+            echo "::warning::SUSFS module zip not found; skipping ABI-matched ksu_susfs injection"
+            exit 0
+          fi
+          if [ ! -f "$SRC_BIN" ]; then
+            echo "::error::ABI-matched ksu_susfs not found in repo: $SRC_BIN"
+            exit 0
+          fi
+
+          SRC_SHA=$(sha256sum "$SRC_BIN" | awk '{print $1}')
+          echo "ABI-matched ksu_susfs sha256: $SRC_SHA"
+
+          WORK=$(mktemp -d)
+          if ! unzip -q -o "$MODULE_ZIP" -d "$WORK"; then
+            echo "::error::failed to unzip $MODULE_ZIP"
+            rm -rf "$WORK"
+            exit 0
+          fi
+
+          REPLACED=0
+          while IFS= read -r bin; do
+            cp -f "$SRC_BIN" "$bin"
+            chmod 0755 "$bin"
+            REPLACED=$((REPLACED + 1))
+            echo "replaced module tool: ${bin#$WORK/}"
+          done < <(find "$WORK" -type f \( -name 'ksu_susfs' -o -name 'ksu_susfs_arm64' \))
+          if [ "$REPLACED" -eq 0 ]; then
+            echo "::error::no ksu_susfs tool found inside the SUSFS module; module ABI may not match the kernel"
+            rm -rf "$WORK"
+            exit 0
+          fi
+
+          while IFS= read -r script; do
+            sed -i -E "s#https://raw\.githubusercontent\.com/sidex15/susfs4ksu-binaries/[A-Za-z0-9._/-]+#$PINNED_BIN_URL#g" "$script"
+          done < <(find "$WORK" -type f -name '*.sh')
+
+          rm -f "$MODULE_ZIP"
+          if ! ( cd "$WORK" && zip -qr9 "$OLDPWD/$MODULE_ZIP" . ); then
+            echo "::error::failed to repack $MODULE_ZIP"
+            rm -rf "$WORK"
+            exit 0
+          fi
+          rm -rf "$WORK"
+
+          VER=$(mktemp -d)
+          if ! unzip -q -o "$MODULE_ZIP" -d "$VER"; then
+            echo "::error::failed to re-read $MODULE_ZIP"
+            rm -rf "$VER"
+            exit 0
+          fi
+          FOUND_SHA=$(find "$VER" -type f \( -name 'ksu_susfs' -o -name 'ksu_susfs_arm64' \) -exec sha256sum {} \; | awk '{print $1}' | sort -u)
+          if [ "$FOUND_SHA" = "$SRC_SHA" ]; then
+            echo "SUSFS module now ships the ABI-matched ksu_susfs ($SRC_SHA)"
+          else
+            echo "::error::SUSFS module tool verification failed (found '$FOUND_SHA', expected '$SRC_SHA')"
+          fi
+          if grep -rq 'sidex15/susfs4ksu-binaries' "$VER"; then
+            echo "::warning::module still references sidex15/susfs4ksu-binaries; its auto-update may overwrite the ABI-matched tool"
+          else
+            echo "SUSFS module auto-update URL repointed to the ABI-matched tool"
+          fi
+          rm -rf "$VER"
 
       - name: Notify on failure
         if: steps.add_KSU.outcome == 'failure'

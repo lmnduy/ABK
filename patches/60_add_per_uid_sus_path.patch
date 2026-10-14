@@ -1,0 +1,287 @@
+diff --git a/kernel_patches/include/linux/susfs.h b/kernel_patches/include/linux/susfs.h
+--- a/kernel_patches/include/linux/susfs.h
++++ b/kernel_patches/include/linux/susfs.h
+@@ -39,9 +39,17 @@
+ /* sus_path */
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ struct st_susfs_sus_path {
+ 	char                                    target_pathname[SUSFS_MAX_LEN_PATHNAME];
+-	int                                     err;
++	int                                     uid; /* uid allowed to still see this path, -1 = nobody */
++	int                                     err;
++};
++
++struct st_susfs_sus_path_hlist {
++	struct hlist_node                       node;
++	unsigned long                           target_ino;
++	unsigned long                           target_dev;
++	int                                     allowed_uid;
+ };
+ 
+ struct st_susfs_sus_path_list {
+ 	struct list_head                        list;
+diff --git a/kernel_patches/fs/susfs.c b/kernel_patches/fs/susfs.c
+--- a/kernel_patches/fs/susfs.c
++++ b/kernel_patches/fs/susfs.c
+@@ -43,8 +43,10 @@
+ /* sus_path */
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ DEFINE_STATIC_SRCU(susfs_srcu_sus_path_loop);
+ static DEFINE_MUTEX(susfs_mutex_lock_sus_path);
++static DEFINE_MUTEX(susfs_mutex_lock_sus_path_uid);
++static DEFINE_HASHTABLE(SUS_PATH_UID_HLIST, 12);
+ static LIST_HEAD(LH_SUS_PATH_LOOP);
+ const struct qstr susfs_fake_qstr_name = QSTR_INIT("..5.u.S", 7); // used to re-test the dcache lookup, make sure you don't have file named like this!!
+ 
+ void susfs_add_sus_path(void __user **user_info) {
+@@ -79,15 +81,17 @@
+ 			goto out_path_put_path;
+ 		}
+ 		set_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags);
+ 		set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
++		susfs_sus_path_uid_upsert(&fi->inode, info.uid);
+ 		SUSFS_LOGI("flagged AS_FLAGS_SUS_PATH on pathname: '%s', fi->nodeid: %llu, fi->inode.i_ino: %lu, fi->inode.i_mapping->flags: 0x%lx\n", 
+ 					info.target_pathname, fi->nodeid, fi->inode.i_ino, fi->inode.i_mapping->flags);
+ 		info.err = 0;
+ 		goto out_path_put_path;
+ 	}
+ 
+ 	set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
++	susfs_sus_path_uid_upsert(inode, info.uid);
+ 	SUSFS_LOGI("flagged AS_FLAGS_SUS_PATH on pathname: '%s', ino: '%lu', inode->i_mapping->flags: 0x%lx\n",
+ 				info.target_pathname, inode->i_ino, inode->i_mapping->flags);
+ 	info.err = 0;
+ out_path_put_path:
+@@ -120,8 +124,9 @@
+ 		goto out_copy_to_user;
+ 	}
+ 	strscpy(new_list->info.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
+ 	strscpy(new_list->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
++	new_list->info.uid = info.uid;
+ 	INIT_LIST_HEAD(&new_list->list);
+ 	mutex_lock(&susfs_mutex_lock_sus_path);
+ 	list_add_tail_rcu(&new_list->list, &LH_SUS_PATH_LOOP);
+ 	mutex_unlock(&susfs_mutex_lock_sus_path);
+@@ -159,20 +164,78 @@
+ 					continue;
+ 				}
+ 				set_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags);
+ 				set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
++				susfs_sus_path_uid_upsert(&fi->inode, cursor->info.uid);
+ 				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', fi->inode.i_ino: '%lu', fi->inode.i_mapping->flags: 0x%lx\n",
+ 						cursor->target_pathname, fi->inode.i_ino, fi->inode.i_mapping->flags);
+ 			} else {
+ 				set_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags);
++				susfs_sus_path_uid_upsert(inode, cursor->info.uid);
+ 				SUSFS_LOGI("re-flag AS_FLAGS_SUS_PATH on path '%s', inode->i_ino: '%lu', inode->i_mapping->flags: 0x%lx\n",
+ 						cursor->target_pathname, inode->i_ino, inode->i_mapping->flags);
+ 			}
+ 			path_put(&path);
+ 		}
+ 	}
+ 	srcu_read_unlock(&susfs_srcu_sus_path_loop, srcu_idx);
+ 	revert_creds(saved);
++}
++
++static bool susfs_sus_path_uid_is_allowed(struct inode *inode) {
++	struct st_susfs_sus_path_hlist *entry = NULL;
++	bool allowed = false;
++
++	if (!inode)
++		return false;
++
++	rcu_read_lock();
++	hash_for_each_possible_rcu(SUS_PATH_UID_HLIST, entry, node, inode->i_ino) {
++		if (entry->target_ino == inode->i_ino &&
++			entry->target_dev == inode->i_sb->s_dev &&
++			entry->allowed_uid >= 0 &&
++			(uid_t)entry->allowed_uid == current_uid().val)
++		{
++			allowed = true;
++			break;
++		}
++	}
++	rcu_read_unlock();
++	return allowed;
++}
++
++static void susfs_sus_path_uid_upsert(struct inode *inode, int allowed_uid) {
++	struct st_susfs_sus_path_hlist *entry = NULL;
++	bool found = false;
++
++	if (!inode || allowed_uid < 0)
++		return;
++
++	mutex_lock(&susfs_mutex_lock_sus_path_uid);
++	hash_for_each_possible(SUS_PATH_UID_HLIST, entry, node, inode->i_ino) {
++		if (entry->target_ino == inode->i_ino &&
++			entry->target_dev == inode->i_sb->s_dev)
++		{
++			entry->allowed_uid = allowed_uid;
++			found = true;
++			break;
++		}
++	}
++	if (!found) {
++		entry = kzalloc(sizeof(struct st_susfs_sus_path_hlist), GFP_KERNEL);
++		if (!entry) {
++			SUSFS_LOGE("failed allocating sus_path uid entry\n");
++			mutex_unlock(&susfs_mutex_lock_sus_path_uid);
++			return;
++		}
++		entry->target_ino = inode->i_ino;
++		entry->target_dev = inode->i_sb->s_dev;
++		entry->allowed_uid = allowed_uid;
++		hash_add_rcu(SUS_PATH_UID_HLIST, &entry->node, entry->target_ino);
++	}
++	SUSFS_LOGI("sus_path visible-to-uid set: ino '%lu', dev '%lu', allowed_uid '%d'\n",
++			inode->i_ino, inode->i_sb->s_dev, allowed_uid);
++	mutex_unlock(&susfs_mutex_lock_sus_path_uid);
+ }
+ 
+ static inline bool is_i_uid_not_allowed(uid_t i_uid) {
+ 	return likely(current_uid().val != i_uid);
+@@ -187,8 +250,11 @@
+ bool susfs_is_inode_sus_path(struct inode *inode)
+ #endif
+ {
+ 	struct fuse_inode *fi = NULL;
++	struct inode *sus_inode = NULL;
++	uid_t sus_i_uid;
++
+ 	if (!susfs_is_current_proc_umounted_app()) {
+ 		return false;
+ 	}
+ 	if (!inode->i_mapping) {
+@@ -200,35 +266,30 @@
+ 		if (!fi || !fi->inode.i_mapping) {
+ 			SUSFS_LOGE("fi || fi->inode.i_mapping is NULL\n");
+ 			return false;
+ 		}
++		if (!test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags)) {
++			return false;
++		}
++		sus_inode = &fi->inode;
++	} else {
++		if (!test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags)) {
++			return false;
++		}
++		sus_inode = inode;
++	}
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags) &&
+-			is_i_uid_not_allowed(i_uid_into_vfsuid(idmap, &fi->inode).val)))
++	sus_i_uid = i_uid_into_vfsuid(idmap, sus_inode).val;
+ #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags) &&
+-			is_i_uid_not_allowed(i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode).val)))
++	sus_i_uid = i_uid_into_mnt(i_user_ns(sus_inode), sus_inode).val;
+ #else
+-		if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &fi->inode.i_mapping->flags) &&
+-			is_i_uid_not_allowed(fi->inode.i_uid.val)))
++	sus_i_uid = sus_inode->i_uid.val;
+ #endif
+-		{
+-			SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+-			return true;
+-		}
++	/* the app owning the hidden path keeps seeing it */
++	if (susfs_sus_path_uid_is_allowed(sus_inode)) {
+ 		return false;
+ 	}
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags) &&
+-		is_i_uid_not_allowed(i_uid_into_vfsuid(idmap, inode).val)))
+-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags) &&
+-		is_i_uid_not_allowed(i_uid_into_mnt(i_user_ns(inode), inode).val)))
+-#else
+-	if (unlikely(test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags) &&
+-		is_i_uid_not_allowed(inode->i_uid.val)))
+-#endif
+-	{
++	if (is_i_uid_not_allowed(sus_i_uid)) {
+ 		SUSFS_LOGI("hiding path with ino '%lu'\n", inode->i_ino);
+ 		return true;
+ 	}
+ 	return false;
+diff --git a/ksu_susfs/jni/features/sus_path.c b/ksu_susfs/jni/features/sus_path.c
+--- a/ksu_susfs/jni/features/sus_path.c
++++ b/ksu_susfs/jni/features/sus_path.c
+@@ -13,23 +13,26 @@
+ #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553
+ 
+ struct st_susfs_sus_path {
+ 	char                    target_pathname[SUSFS_MAX_LEN_PATHNAME];
++	int                     uid; /* -1 = hidden from every non-su app proc, else this uid keeps seeing it */
+ 	int                     err;
+ };
+ 
+ void sus_path_print_help(void){
+-	log("    add_sus_path </path/of/file_or_directory>\n");
++	log("    add_sus_path </path/of/file_or_directory> [visible_uid]\n");
+ 	log("      |--> Added path and all its sub-paths will be hidden for umounted app process from several syscalls\n");
+ 	log("      |--> Please be reminded that if the target path has upper mounts then make sure the proper layer is added, otherwise it may not be effective for the target process.\n");
+ 	log("      * Important Notes *\n");
+ 	log("      - Only effective for umounted process with uid >= 10000\n");
++	log("      - [visible_uid]: optional, that single uid keeps seeing the path (owner app of a hidden package). Default -1 = hidden from all.\n");
+ 	log("\n");
+-	log("    add_sus_path_loop </path/of/file_or_directory>\n");
++	log("    add_sus_path_loop </path/of/file_or_directory> [visible_uid]\n");
+ 	log("      |--> The only difference to add_sus_path is that the added sus_path via this cli will be flagged as SUS_PATH again for the app process when it is being spawned by zygote and marked umounted\n");
+ 	log("      |--> Also it does not check if the path is existed or not, instead it checks for empty string only, so be careful what to add.\n");
+ 	log("      * Important Notes *\n");
+ 	log("      - Only effective for umounted process with uid >= 10000\n");
++	log("      - [visible_uid]: optional, that single uid keeps seeing the path (owner app of a hidden package). Default -1 = hidden from all.\n");
+ 	log("\n");
+ }
+ 
+ static void print_help(void){
+@@ -40,9 +43,9 @@
+ int add_sus_path(int argc, char *argv[]) {
+ 	struct st_susfs_sus_path info = {0};
+ 	char resolved_pathname[PATH_MAX];
+ 
+-	if (argc != 3) {
++	if (argc != 3 && argc != 4) {
+ 		print_help();
+ 		return -EINVAL;
+ 	}
+ 
+@@ -56,8 +59,12 @@
+ 		return errno;
+ 	}
+ 
+ 	strncpy(info.target_pathname, resolved_pathname, SUSFS_MAX_LEN_PATHNAME-1);
++	info.uid = -1;
++	if (argc == 4) {
++		info.uid = (int)strtol(argv[3], NULL, 10);
++	}
+ 	info.err = ERR_CMD_NOT_SUPPORTED;
+ 	syscall(SYS_reboot, KSU_INSTALL_MAGIC1, SUSFS_MAGIC, CMD_SUSFS_ADD_SUS_PATH, &info);
+ 	PRT_MSG_IF_CMD_NOT_SUPPORTED(info.err, CMD_SUSFS_ADD_SUS_PATH);
+ 	return info.err;
+@@ -65,9 +72,9 @@
+ 
+ int add_sus_path_loop(int argc, char *argv[]) {
+ 	struct st_susfs_sus_path info = {0};
+ 
+-	if (argc != 3) {
++	if (argc != 3 && argc != 4) {
+ 		print_help();
+ 		return -EINVAL;
+ 	}
+ 
+@@ -76,8 +83,12 @@
+ 		return -EINVAL;
+ 	}
+ 
+ 	strncpy(info.target_pathname, argv[2], SUSFS_MAX_LEN_PATHNAME-1);
++	info.uid = -1;
++	if (argc == 4) {
++		info.uid = (int)strtol(argv[3], NULL, 10);
++	}
+ 	info.err = ERR_CMD_NOT_SUPPORTED;
+ 	syscall(SYS_reboot, KSU_INSTALL_MAGIC1, SUSFS_MAGIC, CMD_SUSFS_ADD_SUS_PATH_LOOP, &info);
+ 	PRT_MSG_IF_CMD_NOT_SUPPORTED(info.err, CMD_SUSFS_ADD_SUS_PATH_LOOP);
+ 	return info.err;

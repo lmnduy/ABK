@@ -769,6 +769,45 @@ jobs:
           echo "使用当前仓库补丁目录: $ZZH_PATCHES"
           git clone https://github.com/Numbersf/Action-Build.git --depth=1
 
+      - name: 应用 per-UID sus_path 补丁 (ABK)
+        if: inputs.enable_susfs
+        run: |
+          set -uo pipefail
+
+          PATCH_FILE="$GITHUB_WORKSPACE/patches/60_add_per_uid_sus_path.patch"
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+
+          if [ ! -f "$PATCH_FILE" ]; then
+            echo "::error::ABK per-UID sus_path patch not found: $PATCH_FILE"
+            exit 0
+          fi
+          if [ ! -d "$SUSFS_DIR/kernel_patches" ]; then
+            echo "::error::susfs4ksu checkout unavailable; cannot apply the ABK per-UID sus_path patch"
+            exit 0
+          fi
+
+          cd "$SUSFS_DIR"
+
+          if grep -q 'SUS_PATH_UID_HLIST' kernel_patches/fs/susfs.c 2>/dev/null; then
+            echo "[ABK] per-UID sus_path patch already applied, skipping"
+          else
+            echo "[ABK] applying per-UID sus_path patch..."
+            if patch -p1 --forward < "$PATCH_FILE"; then
+              echo "[ABK] per-UID sus_path patch applied"
+            else
+              echo "::error::ABK per-UID sus_path patch FAILED to apply; SUSFS will be built UNPATCHED and the kernel ABI will NOT match the patched ksu_susfs tool"
+            fi
+          fi
+
+          if grep -q 'SUS_PATH_UID_HLIST' kernel_patches/fs/susfs.c 2>/dev/null \
+            && grep -q 'st_susfs_sus_path_hlist' kernel_patches/include/linux/susfs.h 2>/dev/null \
+            && grep -q 'visible_uid' ksu_susfs/jni/features/sus_path.c 2>/dev/null; then
+            echo "[ABK] per-UID sus_path patch verified (SUS_PATH_UID_HLIST / st_susfs_sus_path_hlist / visible_uid)"
+          else
+            echo "::error::ABK per-UID sus_path patch verification FAILED; check that the SUSFS branch matches the patch baseline (susfs4ksu gki-android14-6.1 / SUSFS v2.3.0)"
+          fi
+
+
       - name: 克隆自定义外部模块
         if: inputs.custom_external_modules != ''
         env:
