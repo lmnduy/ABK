@@ -807,6 +807,37 @@ jobs:
             echo "::error::ABK per-UID sus_path patch verification FAILED; check that the SUSFS branch matches the patch baseline (susfs4ksu gki-android14-6.1 / SUSFS v2.3.0)"
           fi
 
+      - name: 应用 per-target hide-from-uid sus_path 补丁 (ABK)
+        if: inputs.enable_susfs
+        run: |
+          set -uo pipefail
+
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_hide_from_uid.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK hide-from-uid sus_path patcher not found: $PATCHER"
+            exit 0
+          fi
+          if [ ! -d "$SUSFS_DIR/kernel_patches" ]; then
+            echo "::error::susfs4ksu checkout unavailable; cannot apply the ABK hide-from-uid sus_path patch"
+            exit 0
+          fi
+
+          if ! python3 "$PATCHER" "$SUSFS_DIR"; then
+            echo "::error::ABK hide-from-uid sus_path patcher FAILED; CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM will not be available"
+            exit 0
+          fi
+
+          if grep -q 'SUS_PATH_UID_HIDE_FROM' "$SUSFS_DIR/kernel_patches/fs/susfs.c" 2>/dev/null \
+            && grep -q 'CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM' "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" 2>/dev/null \
+            && grep -q 'susfs_add_sus_path_hide_from' "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" 2>/dev/null \
+            && grep -q 'add_sus_path_hide_from' "$SUSFS_DIR/ksu_susfs/jni/main.c" 2>/dev/null; then
+            echo "[ABK] hide-from-uid sus_path patch verified (SUS_PATH_UID_HIDE_FROM / CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM / add_sus_path_hide_from)"
+          else
+            echo "::error::ABK hide-from-uid sus_path patch verification FAILED"
+          fi
+
 
       - name: 克隆自定义外部模块
         if: inputs.custom_external_modules != ''
