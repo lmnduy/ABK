@@ -27,6 +27,9 @@ MARKER = "SUS_PATH_UID_HIDE_FROM_ABK"
 CMD = "CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM"
 FLAG = "AS_FLAGS_SUS_PATH_HIDE_FROM"
 HANDLER = "susfs_add_sus_path_hide_from"
+# The ksu_susfs CLI uses UNPREFIXED function names (add_sus_path, add_sus_path_loop),
+# so the kernel-side helper name must NOT be used there.
+CLI_HANDLER = "add_sus_path_hide_from"
 
 REL = {
     "def": "kernel_patches/include/linux/susfs_def.h",
@@ -181,7 +184,7 @@ HELP_LINES = (
 )
 
 CLI_FN = (
-    "int " + HANDLER + "(int argc, char *argv[]) {\n"
+    "int " + CLI_HANDLER + "(int argc, char *argv[]) {\n"
     "\tstruct st_susfs_sus_path info = {0};\n"
     "\tchar resolved_pathname[PATH_MAX];\n"
     "\n"
@@ -360,10 +363,10 @@ def patch_cli(root):
 
 def patch_clih(root):
     p, text = load(root, "clih")
-    if HANDLER in text:
+    if CLI_HANDLER in text:
         return "skip", REL["clih"]
     text = sub_re(text, r"(int add_sus_path_loop\(int argc, char \*argv\[\]\);\n)",
-                  lambda m: m.group(1) + "int " + HANDLER + "(int argc, char *argv[]); /* ABK " + MARKER + " */\n",
+                  lambda m: m.group(1) + "int " + CLI_HANDLER + "(int argc, char *argv[]); /* ABK " + MARKER + " */\n",
                   p, "CLI header prototype")
     save(p, text)
     return "patch", REL["clih"]
@@ -396,9 +399,9 @@ def main():
         ("hdr", HANDLER), ("hdr", "mode;"),
         ("src", MARKER), ("src", CMD), ("src", HANDLER), ("src", FLAG),
         ("ksu", CMD), ("ksu", HANDLER),
-        ("cli", CMD), ("cli", HANDLER),
-        ("clih", HANDLER),
-        ("clim", "add_sus_path_hide_from"),
+        ("cli", CMD), ("cli", CLI_HANDLER),
+        ("clih", CLI_HANDLER),
+        ("clim", CLI_HANDLER),
     ]
     for key, needle in checks:
         p, text = load(root, key)
