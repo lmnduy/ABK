@@ -2620,6 +2620,8 @@ jobs:
                   if [ -f ./fs/susfs.c ] && grep -qF 'i_user_ns(' ./fs/susfs.c; then
                     sed -i 's/i_user_ns(&fi->inode)/fi->inode.i_sb->s_user_ns/g' ./fs/susfs.c
                     sed -i 's/i_user_ns(inode)/inode->i_sb->s_user_ns/g' ./fs/susfs.c
+                    # ABK per-UID sus_path: patched susfs.c uses sus_inode instead of inode
+                    sed -i 's/i_user_ns(sus_inode)/sus_inode->i_sb->s_user_ns/g' ./fs/susfs.c
                     echo "已修复 android13-5.15.41 fs/susfs.c 缺少 i_user_ns helper"
                   fi
                   if grep -qF 'static DEFINE_IDA(susfs_mnt_id_ida);' ./fs/namespace.c \

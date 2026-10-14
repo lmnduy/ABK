@@ -23,13 +23,14 @@ diff --git a/kernel_patches/include/linux/susfs.h b/kernel_patches/include/linux
 diff --git a/kernel_patches/fs/susfs.c b/kernel_patches/fs/susfs.c
 --- a/kernel_patches/fs/susfs.c
 +++ b/kernel_patches/fs/susfs.c
-@@ -43,8 +43,10 @@
+@@ -43,8 +43,11 @@
  /* sus_path */
  #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  DEFINE_STATIC_SRCU(susfs_srcu_sus_path_loop);
  static DEFINE_MUTEX(susfs_mutex_lock_sus_path);
 +static DEFINE_MUTEX(susfs_mutex_lock_sus_path_uid);
 +static DEFINE_HASHTABLE(SUS_PATH_UID_HLIST, 12);
++static void susfs_sus_path_uid_upsert(struct inode *inode, int allowed_uid);
  static LIST_HEAD(LH_SUS_PATH_LOOP);
  const struct qstr susfs_fake_qstr_name = QSTR_INIT("..5.u.S", 7); // used to re-test the dcache lookup, make sure you don't have file named like this!!
  
