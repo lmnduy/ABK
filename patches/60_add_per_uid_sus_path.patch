@@ -135,7 +135,7 @@ diff --git a/kernel_patches/fs/susfs.c b/kernel_patches/fs/susfs.c
 +		entry->allowed_uid = allowed_uid;
 +		hash_add_rcu(SUS_PATH_UID_HLIST, &entry->node, entry->target_ino);
 +	}
-+	SUSFS_LOGI("sus_path visible-to-uid set: ino '%lu', dev '%lu', allowed_uid '%d'\n",
++	SUSFS_LOGI("sus_path visible-to-uid set: ino '%lu', dev '%u', allowed_uid '%d'\n",
 +			inode->i_ino, inode->i_sb->s_dev, allowed_uid);
 +	mutex_unlock(&susfs_mutex_lock_sus_path_uid);
  }
