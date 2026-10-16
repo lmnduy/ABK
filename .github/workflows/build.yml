@@ -6438,6 +6438,36 @@ jobs:
 
           echo "ABK Control 管理器桥接校验通过。"
 
+      - name: 应用 readdir/getdents sus_path 过滤补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_readdir_filter.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK readdir sus_path filter patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/readdir.c" ] || [ ! -f "$KERNEL_ROOT/common/fs/susfs.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK readdir sus_path filter: $KERNEL_ROOT/common/fs"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK readdir sus_path filter patcher FAILED; sus_path entries would stay visible in directory listings"
+            exit 1
+          fi
+
+          if grep -q 'SUS_PATH_READDIR_FILTER_ABK' "$KERNEL_ROOT/common/fs/readdir.c" \
+            && grep -q 'SUS_PATH_READDIR_FILTER_ABK' "$KERNEL_ROOT/common/fs/susfs.c" \
+            && grep -q 'SUS_PATH_READDIR_FILTER_ABK' "$KERNEL_ROOT/common/include/linux/susfs.h"; then
+            echo "[ABK] readdir sus_path filter verified (fs/readdir.c, fs/susfs.c, include/linux/susfs.h)"
+          else
+            echo "::error::ABK readdir sus_path filter verification FAILED"
+            exit 1
+          fi
       - name: 编译内核
         uses: nick-fields/retry@v4
         with:
