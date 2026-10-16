@@ -335,6 +335,24 @@ def patch_src(root):
     return "patch", REL["src"]
 
 
+# --- hunk header accounting -------------------------------------------------
+# This script inserts lines into an EXISTING hunk of 10_enable_susfs_for_ksu.patch.
+# GNU patch requires the hunk header's line counts to match the body, otherwise it
+# reports a malformed hunk and the build (which uses `|| true`) silently drops it.
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def bump_hunk_new(text, pos, delta):
+    headers = [m for m in HUNK_RE.finditer(text) if m.start() < pos]
+    if not headers:
+        die("no hunk header found before the inserted lines")
+    m = headers[-1]
+    new_count = int(m.group(4) or 1) + delta
+    old_range = "-" + m.group(1) + ("," + m.group(2) if m.group(2) else "")
+    new_range = "+" + m.group(3) + "," + str(new_count)
+    header = "@@ " + old_range + " " + new_range + " @@"
+    return text[:m.start()] + header + text[m.end():]
+
 def patch_ksu(root):
     p, text = load(root, "ksu")
     if CMD in text:
@@ -342,6 +360,11 @@ def patch_ksu(root):
     text = sub_re(text, r"(\+            case CMD_SUSFS_ADD_SUS_PATH_LOOP:\n\+                susfs_add_sus_path_loop\(arg\);\n\+                return 0;\n)",
                   lambda m: m.group(1) + "+            case " + CMD + ":\n+                " + HANDLER + "(arg);\n+                return 0;\n",
                   p, "supercall dispatch")
+    dispatch_marker = "+            case " + CMD + ":"
+    dispatch_pos = text.find(dispatch_marker)
+    if dispatch_pos == -1:
+        die("supercall dispatch insertion marker not found in " + REL["ksu"])
+    text = bump_hunk_new(text, dispatch_pos, 3)
     save(p, text)
     return "patch", REL["ksu"]
 
