@@ -1877,6 +1877,67 @@ jobs:
                               break
           PY
 
+      - name: 为 BakaSU/SukiSU 注入 hide_from 派发 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        env:
+          ABK_FEATURE_ID: susfs
+          ABK_FEATURE_FAILURE_MESSAGE: "BakaSU hide_from dispatch integration failed"
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+
+          CMD_MACRO = 'CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM'
+          ANCHOR = 'case CMD_SUSFS_ADD_SUS_PATH_LOOP:'
+
+          path = Path('KernelSU/kernel/supercall/dispatch.c')
+          if not path.is_file():
+              for cand in Path('.').rglob('supercall/dispatch.c'):
+                  path = cand
+                  break
+          if not path.is_file():
+              print('::error::ABK: BakaSU supercall dispatch.c not found; per-target hide_from will be unavailable')
+              sys.exit(1)
+
+          text = path.read_text()
+          if CMD_MACRO in text:
+              print('[ABK] hide_from dispatch already present: ' + str(path))
+              sys.exit(0)
+
+          i = text.find(ANCHOR)
+          if i == -1:
+              print('::error::ABK: dispatch anchor not found in ' + str(path)); sys.exit(1)
+          end = text.find('}', i)
+          if end == -1:
+              print('::error::ABK: dispatch anchor block end not found in ' + str(path)); sys.exit(1)
+          eol = text.find(chr(10), end)
+          if eol == -1:
+              eol = len(text)
+
+          block = (chr(9) + 'case ' + CMD_MACRO + ': {' + chr(10)
+                   + chr(9)*2 + 'susfs_add_sus_path_hide_from(arg);' + chr(10)
+                   + chr(9)*2 + 'return 0;' + chr(10)
+                   + chr(9) + '}')
+          text = text[:eol] + chr(10) + block + text[eol:]
+
+          inc = text.find('#include <linux/susfs_def.h>')
+          if inc != -1 and '#define ' + CMD_MACRO not in text:
+              guard = ('#ifndef ' + CMD_MACRO + chr(10)
+                       + '#define ' + CMD_MACRO + ' 0x55554' + chr(10)
+                       + '#endif' + chr(10))
+              text = text[:inc] + guard + text[inc:]
+
+          path.write_text(text)
+          print('[ABK] hide_from dispatch injected into ' + str(path))
+          PY
+          if ! grep -q 'CMD_SUSFS_ADD_SUS_PATH_HIDE_FROM' "KernelSU/kernel/supercall/dispatch.c"; then
+            echo "::error::ABK: hide_from dispatch injection verification FAILED"
+          else
+            echo "[ABK] hide_from dispatch verified (KernelSU/kernel/supercall/dispatch.c)"
+          fi
+
       - name: 确保 KernelSU SUSFS ABI 兼容
         if: (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'BakaSU') && inputs.enable_susfs
         env:
