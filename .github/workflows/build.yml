@@ -6667,6 +6667,45 @@ jobs:
             exit 1
           fi
 
+      - name: 应用 per-target hidden-uid 私有映射 (ABK)
+        if: inputs.enable_susfs
+        env:
+          ABK_FEATURE_ID: kernelsu
+          ABK_FEATURE_FAILURE_MESSAGE: "ABK per-target hidden uid integration failed"
+        run: |
+          set -uo pipefail
+
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_hidden_uid_from.py"
+          DISPATCH="$KERNEL_ROOT/KernelSU/kernel/supercall/dispatch.c"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK per-target hidden-uid patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -d "$SUSFS_DIR/kernel_patches" ]; then
+            echo "::error::susfs4ksu checkout unavailable; cannot apply the per-target hidden-uid patch"
+            exit 1
+          fi
+          if [ ! -f "$DISPATCH" ]; then
+            DISPATCH="$(find "$KERNEL_ROOT" -path '*/supercall/dispatch.c' | head -n 1)"
+          fi
+
+          if ! python3 "$PATCHER" "$SUSFS_DIR" "$KERNEL_ROOT"; then
+            echo "::error::ABK per-target hidden-uid patcher FAILED; add_hidden_uid_from / CMD_SUSFS_ADD_HIDDEN_UID_FROM will be unavailable"
+            exit 1
+          fi
+
+          if grep -q 'CMD_SUSFS_ADD_HIDDEN_UID_FROM' "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" \
+            && grep -q 'SUSFS_HIDDEN_UID_FROM_ABK' "$SUSFS_DIR/kernel_patches/fs/susfs.c" \
+            && grep -q 'add_hidden_uid_from' "$SUSFS_DIR/ksu_susfs/jni/main.c" \
+            && grep -q 'susfs_uid_is_hidden_from' "$KERNEL_ROOT/common/kernel/sys.c" \
+            && grep -q 'CMD_SUSFS_ADD_HIDDEN_UID_FROM' "$DISPATCH"; then
+            echo "[ABK] per-target hidden uid verified (0x55556, per-(uid,target) table, caller-aware hook, dispatch case)"
+          else
+            echo "::error::ABK per-target hidden uid verification FAILED"
+            exit 1
+          fi
       - name: 应用 sus_path ENOENT 映射补丁 (ABK)
         if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU') && inputs.android_version == 'android14' && inputs.kernel_version == '6.1'
         working-directory: ${{ env.KERNEL_ROOT }}
