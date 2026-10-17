@@ -6529,6 +6529,131 @@ jobs:
             exit 1
           fi
 
+      - name: 应用 sus_path sus_kstat 自注册补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_kstat_autoreg.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK sus_path kstat autoreg patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/susfs.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK sus_path kstat autoreg: $KERNEL_ROOT/common/fs/susfs.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK sus_path kstat autoreg patcher FAILED; hidden paths would keep no pre-hide (dev,ino) record"
+            exit 1
+          fi
+
+          if grep -q 'SUS_PATH_KSTAT_AUTOREG_ABK' "$KERNEL_ROOT/common/fs/susfs.c" \
+            && grep -q 'susfs_abk_register_path_kstat' "$KERNEL_ROOT/common/fs/susfs.c" \
+            && [ "$(grep -c 'susfs_abk_register_path_kstat(' "$KERNEL_ROOT/common/fs/susfs.c")" -ge 6 ] \
+            && grep -q 'core_param(abk_sus_path_kstat' "$KERNEL_ROOT/common/fs/susfs.c"; then
+            echo "[ABK] sus_path kstat autoreg verified (fs/susfs.c: prototype + definition + 4 call sites, abk_sus_path_kstat kill switch)"
+          else
+            echo "::error::ABK sus_path kstat autoreg verification FAILED"
+            exit 1
+          fi
+
+      - name: 应用 mountinfo 重定向 app-uid 门控补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_mount_app_uid.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK mount redirect app-uid patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/namespace.c" ] || [ ! -f "$KERNEL_ROOT/common/fs/proc/fd.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK mount redirect gate: fs/namespace.c or fs/proc/fd.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK mount redirect app-uid patcher FAILED; app path resolution would keep the sus mount that mountinfo hides"
+            exit 1
+          fi
+
+          if grep -q 'SUS_MNT_APP_UID_GATE_ABK' "$KERNEL_ROOT/common/fs/namespace.c" \
+            && grep -q 'SUS_MNT_APP_UID_GATE_ABK' "$KERNEL_ROOT/common/fs/proc/fd.c" \
+            && grep -q 'abk_mount_app_target' "$KERNEL_ROOT/common/fs/namespace.c" \
+            && grep -q 'abk_mount_app_target' "$KERNEL_ROOT/common/fs/proc/fd.c"; then
+            echo "[ABK] mount redirect app-uid gate verified (fs/namespace.c __lookup_mnt, fs/proc/fd.c fdinfo)"
+          else
+            echo "::error::ABK mount redirect app-uid gate verification FAILED"
+            exit 1
+          fi
+
+      - name: 应用 sus_map/open_redirect app-uid 门控补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_sus_map_app_uid.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK sus_map app-uid gate patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/include/linux/susfs_def.h" ]; then
+            echo "::error::kernel tree incomplete for the ABK sus_map gate: $KERNEL_ROOT/common/include/linux/susfs_def.h"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK sus_map app-uid gate patcher FAILED; add_sus_map would stay dead for every app process"
+            exit 1
+          fi
+
+          if grep -q 'SUS_MAP_APP_UID_GATE_ABK' "$KERNEL_ROOT/common/include/linux/susfs_def.h" \
+            && [ "$(grep -c 'susfs_is_current_app_uid() && !susfs_is_current_ksu_domain()' "$KERNEL_ROOT/common/include/linux/susfs_def.h")" -eq 2 ]; then
+            echo "[ABK] sus_map/open_redirect app-uid gate verified (include/linux/susfs_def.h, 2 macros)"
+          else
+            echo "::error::ABK sus_map app-uid gate verification FAILED"
+            exit 1
+          fi
+
+      - name: 应用 proc attr 域隐藏补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_proc_attr_app_uid.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK proc attr patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/proc/base.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK proc attr spoof: $KERNEL_ROOT/common/fs/proc/base.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK proc attr patcher FAILED; /proc/self/attr/current could still expose u:r:su:/u:r:ksu: to an app"
+            exit 1
+          fi
+
+          if grep -q 'PROC_ATTR_APP_UID_SPOOF_ABK' "$KERNEL_ROOT/common/fs/proc/base.c" \
+            && grep -q 'abk_proc_attr_spoof' "$KERNEL_ROOT/common/fs/proc/base.c" \
+            && grep -q 'core_param(abk_proc_attr_gate' "$KERNEL_ROOT/common/fs/proc/base.c"; then
+            echo "[ABK] proc attr app-uid spoof verified (fs/proc/base.c, abk_proc_attr_gate kill switch)"
+          else
+            echo "::error::ABK proc attr app-uid spoof verification FAILED"
+            exit 1
+          fi
+
       - name: 编译内核
         uses: nick-fields/retry@v4
         with:

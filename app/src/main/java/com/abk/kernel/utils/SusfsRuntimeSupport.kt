@@ -563,6 +563,46 @@ fun renderSusfsUtilsScript(): String = """
         }
     }
 
+    abk_susfs_hide_app_dir() {
+        dir="§1"
+        [ -e "§dir" ] || return 1
+        kstat="§(stat -c "%i %d default %s %X 0 %Y 0 %Z 0 %b %B" "§dir" 2>/dev/null || true)"
+        [ -n "§kstat" ] && "§ABK_SUSFS_BIN" add_sus_kstat_statically "§dir" §kstat >/dev/null 2>&1 || true
+        "§ABK_SUSFS_BIN" add_sus_path "§dir" >/dev/null 2>&1 || true
+    }
+
+    # ABK: hide the whole on-disk app footprint for every package in
+    # /data/adb/hma_susfs/pkgs.txt (and targets.txt), so a native
+    # /data/app + /Android/data enumerator cannot contradict PackageManager.
+    abk_susfs_apply_hidden_app_dirs() {
+        for file in /data/adb/hma_susfs/pkgs.txt /data/adb/hma_susfs/targets.txt "$SUSFS_COMPAT_DIR/hide_app_dirs.txt"; do
+            [ -f "§file" ] || continue
+            while IFS= read -r line; do
+                case "§line" in
+                    ""|\#*) continue ;;
+                esac
+                pkg="§(echo "§line" | awk '{print §1}')"
+                case "§pkg" in
+                    *.*) ;;
+                    *) continue ;;
+                esac
+                for dir in /data/app/*"§pkg"-* /data/app/*/*"§pkg"-* /data/app/*/*"§pkg" /data/data/"§pkg" /data/user/0/"§pkg" /data/user_de/0/"§pkg" /sdcard/Android/data/"§pkg" /data/media/0/Android/data/"§pkg"; do
+                    abk_susfs_hide_app_dir "§dir"
+                done
+            done < "§file"
+        done
+    }
+
+    # ABK: hide every module .so that zygisk can map into an app process.
+    # Requires the kernel sus_map app-uid gate (SUS_MAP_APP_UID_GATE_ABK).
+    abk_susfs_apply_module_maps() {
+        for lib in /data/adb/modules/*/zygisk/*.so /data/adb/modules/*/system/lib64/*.so /data/adb/modules/*/system/lib/*.so; do
+            [ -f "§lib" ] || continue
+            "§ABK_SUSFS_BIN" add_sus_map "§lib" >/dev/null 2>&1 || true
+        done
+        abk_susfs_apply_string_file "$SUSFS_COMPAT_DIR/sus_maps.txt" add_sus_map
+    }
+
     abk_susfs_apply_hide_loops() {
         [ "§hide_loops" = "1" ] || return 0
         ls -Ld /proc/fs/jbd2/loop*8 2>/dev/null | sed 's|/proc/fs/jbd2/||; s|-8||' | while read -r device; do
@@ -580,6 +620,7 @@ fun renderSusfsPostFsDataScript(): String = """
     abk_susfs_load || exit 0
     [ "§susfs_log" = "1" ] && "§ABK_SUSFS_BIN" enable_log 1 >/dev/null 2>&1 || true
     abk_susfs_apply_hide_mounts_mode
+    abk_susfs_apply_hidden_app_dirs
     [ "§avc_log_spoofing" = "1" ] && "§ABK_SUSFS_BIN" enable_avc_log_spoofing 1 >/dev/null 2>&1 || true
     [ "§spoof_uname" = "2" ] && abk_susfs_spoof_uname
     [ "§umount_for_zygote_iso_service" = "1" ] && "§ABK_SUSFS_BIN" umount_for_zygote_iso_service 1 >/dev/null 2>&1 || true
@@ -636,7 +677,7 @@ fun renderSusfsBootCompletedScript(): String = """
     abk_susfs_load || exit 0
     abk_susfs_set_root_paths
     abk_susfs_apply_open_redirect_stage 0
-    abk_susfs_apply_string_file "$SUSFS_COMPAT_DIR/sus_maps.txt" add_sus_map
+    abk_susfs_apply_module_maps
     abk_susfs_apply_kstat_json
     [ "§spoof_uname" = "1" ] && abk_susfs_spoof_uname
     if [ "§hide_cusrom" -gt 0 ]; then
@@ -708,6 +749,7 @@ fun renderSusfsBootCompletedScript(): String = """
             fi
         done
     fi
+    abk_susfs_apply_hidden_app_dirs
     abk_susfs_apply_paths_file "$SUSFS_COMPAT_DIR/sus_path.txt" add_sus_path
     if abk_susfs_version_ge 1 5 9 || [ "§MAIN" -ge 2 ]; then
         abk_susfs_apply_paths_file "$SUSFS_COMPAT_DIR/sus_path_loop.txt" add_sus_path_loop
