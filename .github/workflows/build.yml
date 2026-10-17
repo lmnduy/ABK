@@ -6667,6 +6667,41 @@ jobs:
             exit 1
           fi
 
+      - name: 应用 sus_path ENOENT 映射补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU') && inputs.android_version == 'android14' && inputs.kernel_version == '6.1'
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_enoent_map.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK sus_path ENOENT map patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/statfs.c" ] || [ ! -f "$KERNEL_ROOT/common/fs/namei.c" ] || [ ! -f "$KERNEL_ROOT/common/fs/susfs.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK sus_path ENOENT map: $KERNEL_ROOT/common/fs"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK sus_path ENOENT map patcher FAILED; hidden paths would keep leaking EACCES/EPERM"
+            exit 1
+          fi
+
+          if grep -q 'SUS_PATH_ENOENT_MAP_ABK' "$KERNEL_ROOT/common/fs/susfs.c" \
+            && grep -q 'susfs_abk_target_is_hidden' "$KERNEL_ROOT/common/include/linux/susfs.h" \
+            && grep -q 'SUS_PATH_ENOENT_MAP_ABK' "$KERNEL_ROOT/common/fs/statfs.c" \
+            && [ "$(grep -c 'return abk_statfs_enoent(path,' "$KERNEL_ROOT/common/fs/statfs.c")" -eq 4 ] \
+            && grep -q 'SUS_PATH_ENOENT_MAP_ABK' "$KERNEL_ROOT/common/fs/namei.c" \
+            && grep -q 'abk_inode_permission_orig' "$KERNEL_ROOT/common/fs/namei.c" \
+            && grep -q 'susfs_abk_target_is_hidden(inode, NULL)' "$KERNEL_ROOT/common/fs/namei.c"; then
+            echo "[ABK] sus_path ENOENT map verified (fs/statfs.c 4 statfs returns, fs/namei.c inode_permission, fs/susfs.c helper, susfs.h prototype)"
+          else
+            echo "::error::ABK sus_path ENOENT map verification FAILED"
+            exit 1
+          fi
+
       - name: 编译内核
         uses: nick-fields/retry@v4
         with:
