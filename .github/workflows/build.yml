@@ -2589,6 +2589,7 @@ jobs:
               declared = text.find(declaration)
               if declared < 0 or declared > call:
                   anchor = "extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);"
+        continue-on-error: true
                   if anchor in text:
                       text = text.replace(anchor, anchor + "\n" + declaration, 1)
                   else:
