@@ -6710,8 +6710,11 @@ jobs:
             exit 1
           fi
 
-          DISPATCH=$(find "$KERNEL_ROOT" -path '*/supercall/dispatch.c' -print -quit)
-          if [ -z "$DISPATCH" ]; then
+          DISPATCH="$KERNEL_ROOT/KernelSU/kernel/supercall/dispatch.c"
+          if [ ! -f "$DISPATCH" ]; then
+            DISPATCH=$(find "$KERNEL_ROOT" -path '*/supercall/dispatch.c' -print -quit)
+          fi
+          if [ -z "$DISPATCH" ] || [ ! -f "$DISPATCH" ]; then
             echo "::error::ABK hidden-uid oracle verification FAILED: supercall/dispatch.c not found"
             exit 1
           fi
