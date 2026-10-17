@@ -223,7 +223,8 @@ CLIM_ANCHOR = (
 )
 CLIM_ADD = (
     CLIM_ANCHOR
-    + "\tif (!strcmp(argv[1], \"" + CLI + "\"))\n"
+    + "\t/* ABK " + MARKER + " */\n"
+    "\tif (!strcmp(argv[1], \"" + CLI + "\"))\n"
     "\t\treturn " + CLI + "(argc, argv);\n"
 )
 
