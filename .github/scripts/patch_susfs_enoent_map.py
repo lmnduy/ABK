@@ -138,10 +138,18 @@ STATFS_DECL_ADD = (
     "#endif // CONFIG_KSU_SUSFS_SUS_PATH\n"
 )
 
-STATFS_KSTAT_OLD = "\t\t\treturn susfs_statfs_by_dentry(path->dentry, buf, &is_fuse);\n"
-STATFS_KSTAT_NEW = (
-    "\t\t\treturn " + STATFS_HELPER + "(path,\n"
-    "\t\t\t\tsusfs_statfs_by_dentry(path->dentry, buf, &is_fuse));\n"
+# susfs4ksu gki-android14-6.1 before/after the extra vfsmount argument
+STATFS_KSTAT_PAIRS = (
+    (
+        "\t\t\treturn susfs_statfs_by_dentry(path->dentry, path->mnt, buf, &is_fuse);\n",
+        "\t\t\treturn " + STATFS_HELPER + "(path,\n"
+        "\t\t\t\tsusfs_statfs_by_dentry(path->dentry, path->mnt, buf, &is_fuse));\n",
+    ),
+    (
+        "\t\t\treturn susfs_statfs_by_dentry(path->dentry, buf, &is_fuse);\n",
+        "\t\t\treturn " + STATFS_HELPER + "(path,\n"
+        "\t\t\t\tsusfs_statfs_by_dentry(path->dentry, buf, &is_fuse));\n",
+    ),
 )
 
 STATFS_MNT_SAME_OLD = (
@@ -252,6 +260,15 @@ def sub_one(text, needle, repl, path, label):
     return text.replace(needle, repl, 1)
 
 
+def sub_any(text, pairs, path, label):
+    hits = [(old, new) for old, new in pairs if text.count(old) == 1]
+    if len(hits) != 1:
+        die("anchor '" + label + "' matched " + str(len(hits)) +
+            " known variants (expected exactly 1) in " + path)
+    old, new = hits[0]
+    return text.replace(old, new, 1)
+
+
 def patch_hdr(path):
     text = load(path)
     if MARKER in text:
@@ -285,7 +302,7 @@ def patch_statfs(path):
         die("fs/statfs.c lacks the SUSFS kstat statfs hook; unexpected kernel baseline")
     text = sub_one(text, STATFS_DECL_ANCHOR, STATFS_DECL_ANCHOR + STATFS_DECL_ADD, path,
                    "susfs_get_non_sus_vfsmnt_from_vfsmnt declaration")
-    text = sub_one(text, STATFS_KSTAT_OLD, STATFS_KSTAT_NEW, path, "sus_kstat statfs return")
+    text = sub_any(text, STATFS_KSTAT_PAIRS, path, "sus_kstat statfs return")
     text = sub_one(text, STATFS_MNT_SAME_OLD, STATFS_MNT_SAME_NEW, path,
                    "statfs same-mount return")
     text = sub_one(text, STATFS_MNT_NOSUS_OLD, STATFS_MNT_NOSUS_NEW, path,
