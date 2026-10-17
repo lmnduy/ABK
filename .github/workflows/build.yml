@@ -2589,7 +2589,6 @@ jobs:
               declared = text.find(declaration)
               if declared < 0 or declared > call:
                   anchor = "extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);"
-        continue-on-error: true
                   if anchor in text:
                       text = text.replace(anchor, anchor + "\n" + declaration, 1)
                   else:
@@ -6566,6 +6565,7 @@ jobs:
 
       - name: 应用 sus_path sus_kstat 自注册补丁 (ABK)
         if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        continue-on-error: true
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -uo pipefail
