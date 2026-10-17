@@ -839,6 +839,40 @@ jobs:
           fi
 
 
+      - name: 应用 hidden-uid 内核存储与 CLI 补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        run: |
+          set -uo pipefail
+
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_hidden_uid.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK hidden-uid patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -d "$SUSFS_DIR/kernel_patches" ]; then
+            echo "::error::susfs4ksu checkout unavailable; cannot apply the ABK hidden-uid patch"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$SUSFS_DIR"; then
+            echo "::error::ABK hidden-uid patcher FAILED; add_hidden_uid / CMD_SUSFS_ADD_HIDDEN_UID will be unavailable"
+            exit 1
+          fi
+
+          if grep -q 'CMD_SUSFS_ADD_HIDDEN_UID' "$SUSFS_DIR/kernel_patches/include/linux/susfs_def.h" \
+            && grep -q 'susfs_uid_is_hidden' "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" \
+            && grep -q 'SUSFS_HIDDEN_UID_ABK' "$SUSFS_DIR/kernel_patches/fs/susfs.c" \
+            && grep -q 'susfs_add_hidden_uid' "$SUSFS_DIR/kernel_patches/fs/susfs.c" \
+            && grep -q 'add_hidden_uid' "$SUSFS_DIR/ksu_susfs/jni/features/sus_path.c" \
+            && grep -q 'add_hidden_uid' "$SUSFS_DIR/ksu_susfs/jni/main.c"; then
+            echo "[ABK] hidden-uid patch verified (CMD_SUSFS_ADD_HIDDEN_UID 0x55555 / susfs_uid_is_hidden / add_hidden_uid)"
+          else
+            echo "::error::ABK hidden-uid patch verification FAILED"
+            exit 1
+          fi
+
       - name: 克隆自定义外部模块
         if: inputs.custom_external_modules != ''
         env:
@@ -6651,6 +6685,45 @@ jobs:
             echo "[ABK] proc attr app-uid spoof verified (fs/proc/base.c, abk_proc_attr_gate kill switch)"
           else
             echo "::error::ABK proc attr app-uid spoof verification FAILED"
+            exit 1
+          fi
+
+      - name: 应用 hidden-uid UID oracle 补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_hidden_uid_oracle.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK hidden-uid oracle patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/kernel/sys.c" ] || [ ! -f "$KERNEL_ROOT/common/fs/susfs.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK hidden-uid oracle: kernel/sys.c or fs/susfs.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK hidden-uid oracle patcher FAILED; getpriority/setpriority would still expose hidden uids"
+            exit 1
+          fi
+
+          DISPATCH=$(find "$KERNEL_ROOT" -path '*/supercall/dispatch.c' -print -quit)
+          if [ -z "$DISPATCH" ]; then
+            echo "::error::ABK hidden-uid oracle verification FAILED: supercall/dispatch.c not found"
+            exit 1
+          fi
+
+          if grep -q 'SUSFS_HIDDEN_UID_ABK' "$KERNEL_ROOT/common/kernel/sys.c" \
+            && [ "$(grep -c 'susfs_uid_is_hidden' "$KERNEL_ROOT/common/kernel/sys.c")" -eq 2 ] \
+            && grep -q 'CMD_SUSFS_ADD_HIDDEN_UID' "$DISPATCH" \
+            && grep -q 'susfs_add_hidden_uid' "$DISPATCH" \
+            && grep -q 'SUSFS_HIDDEN_UID_ABK' "$KERNEL_ROOT/common/include/linux/susfs.h"; then
+            echo "[ABK] hidden-uid UID oracle verified (kernel/sys.c getpriority+setpriority -> ESRCH, dispatch.c CMD_SUSFS_ADD_HIDDEN_UID, susfs.h ABI)"
+          else
+            echo "::error::ABK hidden-uid UID oracle verification FAILED"
             exit 1
           fi
 
