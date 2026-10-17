@@ -6468,6 +6468,36 @@ jobs:
             echo "::error::ABK readdir sus_path filter verification FAILED"
             exit 1
           fi
+      - name: 应用 statfs/mountinfo 一致性补丁 (ABK)
+        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_statfs_consistency.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK statfs consistency patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/statfs.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK statfs consistency patch: $KERNEL_ROOT/common/fs/statfs.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK statfs consistency patcher FAILED; statfs would keep disagreeing with the filtered mountinfo"
+            exit 1
+          fi
+
+          if grep -q 'SUS_STATFS_CONSISTENCY_ABK' "$KERNEL_ROOT/common/fs/statfs.c" \
+            && grep -q 'abk_statfs_must_use_non_sus_mnt' "$KERNEL_ROOT/common/fs/statfs.c"; then
+            echo "[ABK] statfs/mountinfo consistency verified (fs/statfs.c)"
+          else
+            echo "::error::ABK statfs consistency verification FAILED"
+            exit 1
+          fi
+
       - name: 编译内核
         uses: nick-fields/retry@v4
         with:
