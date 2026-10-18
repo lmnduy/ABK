@@ -1,0 +1,57 @@
+name: Build ksu_susfs (per-target patches)
+
+on:
+  workflow_dispatch:
+    inputs:
+      susfs_repo:
+        description: "SUSFS repo URL"
+        required: true
+        default: "https://gitlab.com/simonpunk/susfs4ksu.git"
+      susfs_ref:
+        description: "SUSFS branch/tag/commit (e.g. gki-android14-6.1)"
+        required: true
+        default: "gki-android14-6.1"
+      ndk_version:
+        description: "Android NDK version"
+        required: true
+        default: "26.1.10909125"
+
+permissions:
+  contents: read
+
+jobs:
+  build-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ inputs.ndk_version }}
+
+      - name: Fetch SUSFS
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "${{ inputs.susfs_ref }}" "${{ inputs.susfs_repo }}" susfs
+          git -C susfs log -1 --oneline
+
+      - name: Apply CLI patches
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+          chmod +x cli/build-cli.sh patches/*.sh
+          ./cli/build-cli.sh "$PWD/susfs" "$PWD/out"
+
+      - name: Verify commands
+        run: |
+          set -euo pipefail
+          for c in add_sus_path_hide_from add_hidden_uid add_hidden_uid_from; do
+            grep -q "$c" out/ksu_susfs || { echo "::error::missing $c"; exit 1; }
+          done
+          ls -l out/ksu_susfs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ksu_susfs-per-target
+          path: out/ksu_susfs
