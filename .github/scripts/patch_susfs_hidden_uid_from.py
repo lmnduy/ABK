@@ -328,31 +328,61 @@ def find_case_end(text, pos):
     return -1
 
 
-def patch_def(root):
-    path, text = load(root, "def")
+def apply_def(path):
+    text = load_path(path)
     if MARKER in text:
-        return "skip", REL["def"]
+        return "skip", path
     text = insert_after_line(text, DEF_ANCHOR, DEF_LINE, path, DEF_ANCHOR)
     save(path, text)
-    return "patch", REL["def"]
+    return "patch", path
+
+
+def apply_hdr(path):
+    text = load_path(path)
+    if MARKER in text:
+        return "skip", path
+    text = insert_after_line(text, HDR_PROTO_ANCHOR, HDR_ADD, path, HDR_PROTO_ANCHOR)
+    save(path, text)
+    return "patch", path
+
+
+def apply_src(path):
+    text = load_path(path)
+    if MARKER in text:
+        return "skip", path
+    text = sub_one(text, SRC_ANCHOR, SRC_BLOCK + SRC_ANCHOR, path, SRC_ANCHOR)
+    save(path, text)
+    return "patch", path
+
+
+def patch_def(root):
+    return apply_def(os.path.join(root, REL["def"]))
 
 
 def patch_hdr(root):
-    path, text = load(root, "hdr")
-    if MARKER in text:
-        return "skip", REL["hdr"]
-    text = insert_after_line(text, HDR_PROTO_ANCHOR, HDR_ADD, path, HDR_PROTO_ANCHOR)
-    save(path, text)
-    return "patch", REL["hdr"]
+    return apply_hdr(os.path.join(root, REL["hdr"]))
 
 
 def patch_src(root):
-    path, text = load(root, "src")
-    if MARKER in text:
-        return "skip", REL["src"]
-    text = sub_one(text, SRC_ANCHOR, SRC_BLOCK + SRC_ANCHOR, path, SRC_ANCHOR)
-    save(path, text)
-    return "patch", REL["src"]
+    return apply_src(os.path.join(root, REL["src"]))
+
+
+def patch_tree(kernel_root):
+    """The kernel tree keeps its own copy of the susfs files, generated from
+    the susfs4ksu templates BEFORE this step runs.  Patch the tree copies too,
+    otherwise kernel/sys.c sees no susfs_uid_is_hidden_from declaration."""
+    base = find_base(kernel_root)
+    if base is None:
+        die("kernel base not found under " + kernel_root)
+    out = []
+    for rel, fn in (("include/linux/susfs_def.h", apply_def),
+                    ("include/linux/susfs.h", apply_hdr),
+                    ("fs/susfs.c", apply_src)):
+        path = os.path.join(base, rel)
+        if not os.path.isfile(path):
+            die("kernel tree file missing: " + path)
+        out.append(fn(path))
+    return out
 
 
 def patch_cli(root):
@@ -442,6 +472,7 @@ def main():
         patch_sys(kernel_root),
         patch_dispatch(kernel_root),
     ]
+    results.extend(patch_tree(kernel_root))
     for state, name in results:
         print("[ABK] per-target hidden uid: " + state + " " + name)
 
@@ -454,6 +485,9 @@ def main():
     base = find_base(kernel_root)
     sys_text = load_path(os.path.join(base, "kernel", "sys.c")) if base else ""
     disp = load_path(find_dispatch(kernel_root)) if find_dispatch(kernel_root) else ""
+    tree_def = load_path(os.path.join(base, "include", "linux", "susfs_def.h")) if base else ""
+    tree_hdr = load_path(os.path.join(base, "include", "linux", "susfs.h")) if base else ""
+    tree_src = load_path(os.path.join(base, "fs", "susfs.c")) if base else ""
 
     checks = [
         (CMD in sdef, "susfs_def.h CMD"),
@@ -464,6 +498,9 @@ def main():
         (CLI in sm, "main.c CLI dispatch"),
         (LOOKUP in sys_text and "current_uid().val" in sys_text, "kernel/sys.c caller-aware hook"),
         ((("case " + CMD + ":") in disp) and (HANDLER + "(arg);" in disp), "dispatch.c case"),
+        (CMD in tree_def, "tree susfs_def.h CMD"),
+        (HANDLER in tree_hdr and LOOKUP in tree_hdr, "tree susfs.h prototypes"),
+        ("ABK_HIDDEN_UID_FROM_HLIST" in tree_src and LOOKUP in tree_src, "tree susfs.c table+lookup"),
     ]
     bad = [name for ok, name in checks if not ok]
     if bad:
