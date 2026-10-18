@@ -1,0 +1,15 @@
+# targets.txt 格式示例（这是示例，不要直接使用）
+#
+# 每行： <target_pkg> <TAB> <hidden_pkg> [<TAB> data]
+#   target_pkg : 从哪个应用的视角隐藏
+#   hidden_pkg : 要被隐藏的包
+#   data       : 可选；只隐藏 data 类路径（/data/user/0、/data/mirror 等），
+#                不动 /data/app（避免影响图标与 APK 读取）
+#
+# 生成方式：HMA-OSS 的 SUSFS 同步（SusfsSyncer）按配置自动写出，
+# 这里的示例仅用于说明格式与调试。
+
+com.example.detector	com.example.hiddenapp
+com.example.detector	com.example.tool		data
+com.example.other	com.example.hiddenapp
+com.example.other	com.example.detector
