@@ -23,7 +23,15 @@ import sys
 MARKER = "HIDE_DEV_DEBUGFS_ABK"
 REL = "common/fs/proc_namespace.c"
 INCLUDE_ANCHOR = '#include "internal.h"\n'
-INCLUDE_ADD = '#include <linux/gfp.h> /* ABK ' + MARKER + ' */\n'
+
+INCLUDE_ADD = (
+    '#include <linux/gfp.h>   /* ABK ' + MARKER + ' */\n'
+    '#include <linux/dcache.h> /* ABK ' + MARKER + ' */\n'
+)
+FWD_DECL = (
+    "/* ABK " + MARKER + " */\n"
+    "static bool abk_should_hide_dev_debugfs(struct vfsmount *mnt);\n"
+)
 
 HELPER = (
     "\n"
@@ -57,6 +65,7 @@ HELPER = (
     "\tfree_page((unsigned long)page);\n"
     "\treturn hide;\n"
     "}\n"
+    "\n"
 )
 
 SKIP = (
@@ -91,35 +100,50 @@ def main():
         return 0
     if INCLUDE_ANCHOR not in text:
         die("anchor '#include \"internal.h\"' not found in " + path)
-    text = text.replace(INCLUDE_ANCHOR, INCLUDE_ANCHOR + INCLUDE_ADD, 1)
 
-    helper_done = False
+    text = text.replace(INCLUDE_ANCHOR, INCLUDE_ANCHOR + INCLUDE_ADD + FWD_DECL, 1)
+
+    # Insert the definition before the EARLIEST of the two consumers, so the
+    # function is always defined before any call site (C99 forbids implicit
+    # declarations, and a static definition after a call is an error).
+    positions = []
+    for fn in FUNCS:
+        idx = text.find(fn)
+        if idx == -1:
+            die("function not found: " + fn + " in " + path)
+        positions.append(idx)
+    insert_at = min(positions)
+    text = text[:insert_at] + HELPER + text[insert_at:]
+
+    # Now add the filter call at each consumer's mnt_id check.
     for fn in FUNCS:
         start = text.find(fn)
         if start == -1:
-            die("function not found: " + fn + " in " + path)
-        if not helper_done:
-            text = text[:start] + HELPER + "\n" + text[start:]
-            helper_done = True
-            start = text.find(fn)
+            die("function vanished: " + fn + " in " + path)
         pos = text.find(MNT_ID_CHECK, start)
         if pos == -1:
             die("mnt_id check not found after " + fn + " in " + path)
-        insert_at = pos + len(MNT_ID_CHECK)
-        text = text[:insert_at] + SKIP + text[insert_at:]
+        at = pos + len(MNT_ID_CHECK)
+        text = text[:at] + SKIP + text[at:]
 
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
 
+    call_sites = text.count("if (abk_should_hide_dev_debugfs(mnt))")
+    defn = text.find("static bool abk_should_hide_dev_debugfs(struct vfsmount *mnt)\n{")
+    first_call = text.find("if (abk_should_hide_dev_debugfs(mnt))")
     checks = [
         (MARKER in text, "marker"),
-        ("abk_should_hide_dev_debugfs" in text, "helper"),
-        (text.count("if (abk_should_hide_dev_debugfs(mnt))") == 2, "two skip sites"),
+        (defn != -1, "definition"),
+        (call_sites == 2, "two skip sites"),
+        (defn < first_call, "definition precedes first call"),
     ]
     bad = [name for ok, name in checks if not ok]
     if bad:
         die("self-check failed: " + ", ".join(bad))
-    print("[ABK] hide-dev-debugfs: patched " + path + " (mountinfo + mounts)")
+    print("[ABK] hide-dev-debugfs: patched " + path + " (definition@%d, calls@%d/%d)"
+          % (defn, first_call,
+             text.find("if (abk_should_hide_dev_debugfs(mnt))", first_call + 1)))
     return 0
 
 
