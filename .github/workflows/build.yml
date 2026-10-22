@@ -6706,17 +6706,17 @@ jobs:
             echo "::error::ABK per-target hidden uid verification FAILED"
             exit 1
           fi
-      - name: 闅愯棌 /dev 涓嬬殑 debugfs 鎸傝浇 (ABK)
+      - name: 隐藏 /dev 下的 debugfs 挂载 (ABK)
         if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
         env:
           ABK_FEATURE_ID: kernelsu
           ABK_FEATURE_FAILURE_MESSAGE: "ABK hide dev debugfs integration failed"
         run: |
           set -uo pipefail
-
+      
           PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_hide_dev_debugfs.py"
           NS="$KERNEL_ROOT/common/fs/proc_namespace.c"
-
+      
           if [ ! -f "$PATCHER" ]; then
             echo "::error::ABK hide-dev-debugfs patcher not found: $PATCHER"
             exit 1
@@ -6725,12 +6725,12 @@ jobs:
             echo "::error::proc_namespace.c not found; SUSFS mount patch missing"
             exit 1
           fi
-
+      
           if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
             echo "::error::ABK hide-dev-debugfs patcher FAILED; container debugfs will keep showing a mount gap"
             exit 1
           fi
-
+      
           if grep -q 'HIDE_DEV_DEBUGFS_ABK' "$NS" \
             && [ "$(grep -c 'abk_should_hide_dev_debugfs(mnt)' "$NS")" -eq 2 ]; then
             echo "[ABK] hide-dev-debugfs verified (app-proc mountinfo/mounts skip /dev/* debugfs)"
