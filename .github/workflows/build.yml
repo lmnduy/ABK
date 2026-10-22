@@ -6595,6 +6595,35 @@ jobs:
             exit 1
           fi
 
+      - name: 应用 mountinfo debugfs(/dev) 隐藏补丁 (ABK)
+        if: inputs.enable_susfs
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -uo pipefail
+
+          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_susfs_hide_dev_debugfs.py"
+
+          if [ ! -f "$PATCHER" ]; then
+            echo "::error::ABK debugfs(/dev) mountinfo patcher not found: $PATCHER"
+            exit 1
+          fi
+          if [ ! -f "$KERNEL_ROOT/common/fs/proc_namespace.c" ]; then
+            echo "::error::kernel tree incomplete for the ABK debugfs(/dev) mountinfo patch: $KERNEL_ROOT/common/fs/proc_namespace.c"
+            exit 1
+          fi
+
+          if ! python3 "$PATCHER" "$KERNEL_ROOT"; then
+            echo "::error::ABK debugfs(/dev) mountinfo patcher FAILED; the app mount view would keep the container debugfs mount"
+            exit 1
+          fi
+
+          if grep -q 'DEBUGFS_DEV_MOUNT_HIDE_ABK' "$KERNEL_ROOT/common/fs/proc_namespace.c" \
+            && grep -q 'abk_hide_dev_debugfs' "$KERNEL_ROOT/common/fs/proc_namespace.c"; then
+            echo "[ABK] debugfs(/dev) mount hide verified (fs/proc_namespace.c app-uid view: mounts + mountinfo + mountstats)"
+          else
+            echo "::error::ABK debugfs(/dev) mount hide verification FAILED"
+            exit 1
+          fi
       - name: 应用 sus_map/open_redirect app-uid 门控补丁 (ABK)
         if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU')
         working-directory: ${{ env.KERNEL_ROOT }}
