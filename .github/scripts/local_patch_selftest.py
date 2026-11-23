@@ -43,6 +43,7 @@ SCRIPT_RE = re.compile(r"\.github/scripts/([A-Za-z0-9_]+\.py)")
 FIXTURE_PATCHERS = (
     "patch_susfs_readdir_filter.py",
     "patch_abk_app_vis.py",
+    "patch_abk_mount_diag.py",
 )
 
 SRC = r'''#include <linux/fs.h>
@@ -265,13 +266,29 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd, struct old_linux_dirent __user *,
 }
 '''
 
-MNTNS = r'''extern bool susfs_is_current_ksu_domain(void);
+MNTNS = r'''#include <linux/sched/task.h>
+
+extern bool susfs_is_current_ksu_domain(void);
+
+static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt) { return 0; }
+static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt) { return 0; }
+static int show_vfsstat(struct seq_file *m, struct vfsmount *mnt) { return 0; }
 
 static int susfs_show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 {
 	struct mount *r = real_mount(mnt);
 	if (r->mnt_id >= DEFAULT_KSU_MNT_ID)
 		return 0;
+	return 0;
+}
+
+static int mounts_open_common(struct inode *inode, struct file *file,
+			      int (*show)(struct seq_file *, struct vfsmount *))
+{
+	struct task_struct *task = get_proc_task(inode);
+
+	if (!task)
+		return -ESRCH;
 	return 0;
 }
 
