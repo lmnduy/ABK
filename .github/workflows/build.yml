@@ -7072,16 +7072,6 @@ jobs:
                      "$KERNEL_ROOT/arch/arm64/configs" 2>/dev/null); do
             echo "[ABK] USER_NS enabled in $f"
           done
-      - name: 挂载诊断（ABK，临时）
-        if: inputs.enable_susfs && (inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'SukiSU') && inputs.android_version == 'android14' && inputs.kernel_version == '6.1'
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          set -uo pipefail
-          PATCHER="$GITHUB_WORKSPACE/.github/scripts/patch_abk_mount_diag.py"
-          [ -f "$PATCHER" ] || { echo "::error::mount diag patcher not found"; exit 1; }
-          python3 "$PATCHER" "$KERNEL_ROOT" || { echo "::error::mount diag patcher FAILED"; exit 1; }
-          grep -q 'MOUNT_DIAG_ABK' "$KERNEL_ROOT/common/fs/proc_namespace.c" || { echo "::error::mount diag patch missing"; exit 1; }
-          echo "[ABK] mount diagnostics inserted (temporary)"
       - name: 编译内核
         uses: nick-fields/retry@v4
         with:
