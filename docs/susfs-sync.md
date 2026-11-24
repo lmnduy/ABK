@@ -131,6 +131,47 @@ dmesg | grep "from uid '<目标 app uid>'" | grep "ino '0'" | wc -l    # 期望 
 
 ---
 
+### 3.6 重载「只增不删」：模板改小后旧条目残留到重启（2026-11-24 教训）
+
+**现象**：在 HMA 里把几个应用加进白名单模板（隐藏集合变小）→ 同步 → 春秋报
+`隐藏应用列表生效 (2)`；`policy.tsv` 完全正确（该 uid 45 条规则），`dmesg` 里
+`hiding path` 计数为 0；**重启手机后自动恢复正常**。
+
+**机制**：`susfs_load_policy_file()` 只做两件事——
+
+```c
+susfs_sus_path_uid_upsert(ino_target, uid, 1);   /* 只插入/更新 */
+susfs_loop_queue_path(target, uid, 1);           /* 只追加 */
+```
+
+两张表都没有"移除"路径：
+
+- `SUS_PATH_UID_HLIST`（(ino, dev, uid) → mode）按 upsert 语义只增不减；
+- `LH_SUS_PATH_LOOP` 是去重追加的队列，且 `susfs_run_sus_path_loop()` 在**每次
+  app 进程 spawn** 时会把队列条目重新置位 + 重新 upsert。
+
+于是隐藏集合从 H1 缩小到 H2 时，H1 里被移出的行仍然留在两张表里，并在后续每次
+app 启动时被 loop worker 重新强化：**PM 层已可见、磁盘层仍隐藏**，两层不再一致。
+检测器（春秋）不需要 stat 被隐藏的目录就能判定"存在隐藏列表"。
+
+**为什么 `hiding path` 日志是 0**：那句日志只在 `is_denied()` 命中的快路径打印；残留行
+是由 loop worker 在进程启动阶段重新置位的，与被遮蔽目录的后续访问无关。
+
+**当前处置（决定）**：保持"追加"模式，不引入整表重建。
+
+- 模板修改是低频操作（本次是当天唯一一次），重启一次即可恢复，代价可接受；
+- 整表重建需要「清空 → 重新解析 → 重新入队」的原子切换，涉及
+  `SUS_PATH_UID_HLIST` 与 `LH_SUS_PATH_LOOP` 两把锁 + RCU grace，风险高于收益；
+- 一旦重建途中解析失败，会把「原本还能用的隐藏」清成「什么都没有」。
+
+**操作约定**：改完模板并同步后，如果检测器出现「隐藏应用列表生效」类词条，
+**重启一次**再判定；重启后的状态才是磁盘层与 PM 层一致的状态。此约定已写入
+`HMA-susfs/docs/SUSFS-SYNC.md`。
+
+**如果将来要修**：在 `susfs_load_policy_file()` 解析前，按桶 `hash_del_rcu` 清空
+`SUS_PATH_UID_HLIST`、按 `list_del_rcu` 清空 `LH_SUS_PATH_LOOP`，各自解锁后
+`synchronize_rcu()` 再 `kfree`，然后由文件重建。实现草案见提交 `b4f903e`
+（已回退，仅作参考）。
 ## 4. 排障速查
 
 ```sh
@@ -158,7 +199,7 @@ su -c 'sh /data/adb/hma_susfs/sync.sh; echo rc=$?'     # 期望 SUSFS_SYNC_OK / 
 
 ## 5. 变更记录
 
-- **2026-11-03**：修 FUSE `i_ino == 0` 导致的 per-uid 通配（原神读不到自己的
+- **2026-11-24**：定位「重载只增不删」短板（改模板后旧隐藏条目残留到重启），\n  决定沿用追加模式并在文档中约定「改模板后先重启再判定」。内核回退到 490614b。\n- **2026-11-03**：修 FUSE `i_ino == 0` 导致的 per-uid 通配（原神读不到自己的
   `/sdcard/Android/data`）。新增 `patch_susfs_ino_zero_guard.py`，dev 提交 `3f26140`。
 - **2026-11-02**：SUSFS 同步到 `a0ac906`；新增 sus_type 注册、loop per-uid 语义、cred guard；
   修正 mount app-uid gate 锚点。dev 提交：`c7933d2`、`99b4685`、`abc4d16`、`e039b2d`。
